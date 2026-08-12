@@ -1,0 +1,205 @@
+import boto3
+import gzip
+import json
+import logging
+import os
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+s3_client = boto3.client("s3")
+dynamodb = boto3.resource("dynamodb")
+
+# -----------------------------------------------------------------------
+# DynamoDB 테이블
+# -----------------------------------------------------------------------
+
+# ref_error_event
+# - PK: accessKeyId (String)
+# - SK: eventTime#eventId (String)
+# - eventName (String)
+# - errorCode (String)
+# - errorMessage (String)
+error_event_table = dynamodb.Table(os.environ["ERROR_EVENT_TABLE"])
+
+# ref_ip_country
+# - PK: accessKeyId (String)
+# - SK: eventTime#eventId (String)
+# - sourceIPAddress (String)
+# - countryCode (String)
+# - city (String)
+ip_country_table = dynamodb.Table(os.environ["IP_COUNTRY_TABLE"])
+
+# ref_aws_api
+# - PK: accessKeyId (String)
+# - SK: eventTime#eventId (String)
+# - eventName (String)
+# - eventSource (String)
+aws_api_table = dynamodb.Table(os.environ["AWS_API_TABLE"])
+
+# ref_region
+# - PK: accessKeyId (String)
+# - SK: eventTime#eventId (String)
+# - awsRegion (String)
+region_table = dynamodb.Table(os.environ["REGION_TABLE"])
+
+# ref_user_agent
+# - PK: accessKeyId (String)
+# - SK: eventTime#eventId (String)
+# - userAgent (String)       원본 userAgent 문자열
+# - userAgentType (String)   파싱 후 분류값 (CLI / SDK / Browser / Service / Unknown)
+user_agent_table = dynamodb.Table(os.environ["USER_AGENT_TABLE"])
+
+# -----------------------------------------------------------------------
+# GeoIP (Lambda Layer에 mmdb 구성 전제)
+# -----------------------------------------------------------------------
+try:
+    import geoip2.database
+    geo_reader = geoip2.database.Reader("/opt/GeoLite2-City.mmdb")
+except Exception as e:
+    geo_reader = None
+    logger.warning(f"GeoIP reader 초기화 실패: {e}")
+
+
+def lambda_handler(event, context):
+    for record in event.get("Records", []):
+        bucket = record["s3"]["bucket"]["name"]
+        key = record["s3"]["object"]["key"]
+
+        try:
+            process_cloudtrail_file(bucket, key)
+        except Exception as e:
+            logger.error(f"파일 처리 실패 - bucket: {bucket}, key: {key}, error: {e}")
+
+
+def process_cloudtrail_file(bucket: str, key: str):
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    compressed = response["Body"].read()
+
+    with gzip.GzipFile(fileobj=__import__("io").BytesIO(compressed)) as f:
+        log_data = json.loads(f.read().decode("utf-8"))
+
+    records = log_data.get("Records", [])
+    logger.info(f"총 {len(records)}개 이벤트 파싱 시작")
+
+    for record in records:
+        access_key_id = extract_access_key_id(record)
+
+        # AKIA로 시작하는 IAM 사용자 액세스키만 처리
+        if not access_key_id or not access_key_id.startswith("AKIA"):
+            continue
+
+        try:
+            process_event(record, access_key_id)
+        except Exception as e:
+            logger.error(f"이벤트 처리 실패 - eventId: {record.get('eventID')}, error: {e}")
+
+
+def process_event(record: dict, access_key_id: str):
+    event_id = record.get("eventID", "")
+    event_time = record.get("eventTime", "")
+    sk = f"{event_time}#{event_id}"
+
+    write_region(access_key_id, sk, record)
+    write_aws_api(access_key_id, sk, record)
+    write_user_agent(access_key_id, sk, record)
+
+    # errorCode가 있는 이벤트만 ref_error_event에 적재
+    if record.get("errorCode"):
+        write_error_event(access_key_id, sk, record)
+
+    # sourceIPAddress가 AWS 서비스 도메인이 아닌 경우만 GeoIP 조회
+    source_ip = record.get("sourceIPAddress", "")
+    if source_ip and not source_ip.endswith(".amazonaws.com"):
+        write_ip_country(access_key_id, sk, source_ip)
+
+
+# -----------------------------------------------------------------------
+# 테이블별 적재 함수
+# -----------------------------------------------------------------------
+
+def write_error_event(access_key_id: str, sk: str, record: dict):
+    error_event_table.put_item(Item={
+        "accessKeyId": access_key_id,
+        "eventTime#eventId": sk,
+        "eventName": record.get("eventName", ""),
+        "errorCode": record.get("errorCode", ""),
+        "errorMessage": record.get("errorMessage", ""),
+    })
+
+
+def write_ip_country(access_key_id: str, sk: str, source_ip: str):
+    country_code = ""
+    city = ""
+
+    if geo_reader:
+        try:
+            geo = geo_reader.city(source_ip)
+            country_code = geo.country.iso_code or ""
+            city = geo.city.name or ""
+        except Exception as e:
+            logger.warning(f"GeoIP 조회 실패 - IP: {source_ip}, error: {e}")
+
+    ip_country_table.put_item(Item={
+        "accessKeyId": access_key_id,
+        "eventTime#eventId": sk,
+        "sourceIPAddress": source_ip,
+        "countryCode": country_code,
+        "city": city,
+    })
+
+
+def write_aws_api(access_key_id: str, sk: str, record: dict):
+    aws_api_table.put_item(Item={
+        "accessKeyId": access_key_id,
+        "eventTime#eventId": sk,
+        "eventName": record.get("eventName", ""),
+        "eventSource": record.get("eventSource", ""),
+    })
+
+
+def write_region(access_key_id: str, sk: str, record: dict):
+    region_table.put_item(Item={
+        "accessKeyId": access_key_id,
+        "eventTime#eventId": sk,
+        "awsRegion": record.get("awsRegion", ""),
+    })
+
+
+def write_user_agent(access_key_id: str, sk: str, record: dict):
+    user_agent = record.get("userAgent", "")
+
+    user_agent_table.put_item(Item={
+        "accessKeyId": access_key_id,
+        "eventTime#eventId": sk,
+        "userAgent": user_agent,
+        "userAgentType": classify_user_agent(user_agent),
+    })
+
+
+# -----------------------------------------------------------------------
+# 헬퍼 함수
+# -----------------------------------------------------------------------
+
+def extract_access_key_id(record: dict) -> str:
+    """userIdentity에서 accessKeyId 추출"""
+    user_identity = record.get("userIdentity", {})
+    return user_identity.get("accessKeyId", "")
+
+
+def classify_user_agent(user_agent: str) -> str:
+    """userAgent 문자열을 분류"""
+    ua = user_agent.lower()
+
+    if not ua:
+        return "Unknown"
+    if "aws-cli" in ua:
+        return "CLI"
+    if any(sdk in ua for sdk in ["boto3", "botocore", "aws-sdk", "aws-java-sdk", "aws-go-sdk"]):
+        return "SDK"
+    if any(svc in ua for svc in ["aws-internal", "signin.amazonaws.com", "console.amazonaws.com"]):
+        return "Service"
+    if any(browser in ua for browser in ["mozilla", "chrome", "safari", "firefox"]):
+        return "Browser"
+
+    return "Unknown"

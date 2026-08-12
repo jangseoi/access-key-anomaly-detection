@@ -1,0 +1,59 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoDBReadRefTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:Query"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_ip_country",
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_region",
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_user_agent",
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_error_event",
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_aws_api"
+      ]
+    },
+    {
+      "Sid": "DynamoDBStreams",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:DescribeStream",
+        "dynamodb:ListStreams"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_aws_api/stream/*",
+        "arn:aws:dynamodb:{region}:{account-id}:table/ref_error_event/stream/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDBCooldownTable",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem"
+      ],
+      "Resource": "arn:aws:dynamodb:{region}:{account-id}:table/ref_alert_cooldown"
+    },
+    {
+      "Sid": "SecretsManagerRead",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:{region}:{account-id}:secret:security-event-app-token*"
+    },
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:{region}:{account-id}:log-group:/aws/lambda/ref-suspicious-detector:*"
+    }
+  ]
+}
