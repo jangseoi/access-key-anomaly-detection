@@ -3,6 +3,7 @@ import gzip
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -15,43 +16,22 @@ dynamodb = boto3.resource("dynamodb")
 # -----------------------------------------------------------------------
 
 # ref_error_event
-# - PK: accessKeyId (String)
-# - SK: eventTime#eventId (String)
-# - eventName (String)
-# - errorCode (String)
-# - errorMessage (String)
 error_event_table = dynamodb.Table(os.environ["ERROR_EVENT_TABLE"])
 
 # ref_ip_country
-# - PK: accessKeyId (String)
-# - SK: eventTime#eventId (String)
-# - sourceIPAddress (String)
-# - countryCode (String)
-# - city (String)
 ip_country_table = dynamodb.Table(os.environ["IP_COUNTRY_TABLE"])
 
 # ref_aws_api
-# - PK: accessKeyId (String)
-# - SK: eventTime#eventId (String)
-# - eventName (String)
-# - eventSource (String)
 aws_api_table = dynamodb.Table(os.environ["AWS_API_TABLE"])
 
 # ref_region
-# - PK: accessKeyId (String)
-# - SK: eventTime#eventId (String)
-# - awsRegion (String)
 region_table = dynamodb.Table(os.environ["REGION_TABLE"])
 
 # ref_user_agent
-# - PK: accessKeyId (String)
-# - SK: eventTime#eventId (String)
-# - userAgent (String)       원본 userAgent 문자열
-# - userAgentType (String)   파싱 후 분류값 (CLI / SDK / Browser / Service / Unknown)
 user_agent_table = dynamodb.Table(os.environ["USER_AGENT_TABLE"])
 
 # -----------------------------------------------------------------------
-# GeoIP (Lambda Layer에 mmdb 구성 전제)
+# GeoIP (Lambda Layer에 mmdb 구성)
 # -----------------------------------------------------------------------
 try:
     import geoip2.database
@@ -100,35 +80,39 @@ def process_event(record: dict, access_key_id: str):
     event_time = record.get("eventTime", "")
     sk = f"{event_time}#{event_id}"
 
-    write_region(access_key_id, sk, record)
-    write_aws_api(access_key_id, sk, record)
-    write_user_agent(access_key_id, sk, record)
+    ttl = int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp())
+
+    write_region(access_key_id, sk, record, ttl)
+    write_aws_api(access_key_id, sk, record, ttl)
+    write_user_agent(access_key_id, sk, record, ttl)
 
     # errorCode가 있는 이벤트만 ref_error_event에 적재
     if record.get("errorCode"):
-        write_error_event(access_key_id, sk, record)
+        write_error_event(access_key_id, sk, record, ttl)
 
     # sourceIPAddress가 AWS 서비스 도메인이 아닌 경우만 GeoIP 조회
     source_ip = record.get("sourceIPAddress", "")
     if source_ip and not source_ip.endswith(".amazonaws.com"):
-        write_ip_country(access_key_id, sk, source_ip)
+        write_ip_country(access_key_id, sk, source_ip, ttl)
 
 
 # -----------------------------------------------------------------------
 # 테이블별 적재 함수
 # -----------------------------------------------------------------------
 
-def write_error_event(access_key_id: str, sk: str, record: dict):
-    error_event_table.put_item(Item={
+def write_error_event(access_key_id: str, sk: str, record: dict, ttl: int):
+    item = {
         "accessKeyId": access_key_id,
         "eventTime#eventId": sk,
         "eventName": record.get("eventName", ""),
         "errorCode": record.get("errorCode", ""),
         "errorMessage": record.get("errorMessage", ""),
-    })
+        "ttl": ttl,
+    }
+    error_event_table.put_item(Item=item)
 
 
-def write_ip_country(access_key_id: str, sk: str, source_ip: str):
+def write_ip_country(access_key_id: str, sk: str, source_ip: str, ttl: int):
     country_code = ""
     city = ""
 
@@ -140,41 +124,48 @@ def write_ip_country(access_key_id: str, sk: str, source_ip: str):
         except Exception as e:
             logger.warning(f"GeoIP 조회 실패 - IP: {source_ip}, error: {e}")
 
-    ip_country_table.put_item(Item={
+    item = {
         "accessKeyId": access_key_id,
         "eventTime#eventId": sk,
         "sourceIPAddress": source_ip,
         "countryCode": country_code,
         "city": city,
-    })
+        "ttl": ttl,
+    }
+    ip_country_table.put_item(Item=item)
 
 
-def write_aws_api(access_key_id: str, sk: str, record: dict):
-    aws_api_table.put_item(Item={
+def write_aws_api(access_key_id: str, sk: str, record: dict, ttl: int):
+    item = {
         "accessKeyId": access_key_id,
         "eventTime#eventId": sk,
         "eventName": record.get("eventName", ""),
         "eventSource": record.get("eventSource", ""),
-    })
+        "ttl": ttl,
+    }
+    aws_api_table.put_item(Item=item)
 
 
-def write_region(access_key_id: str, sk: str, record: dict):
-    region_table.put_item(Item={
+def write_region(access_key_id: str, sk: str, record: dict, ttl: int):
+    item = {
         "accessKeyId": access_key_id,
         "eventTime#eventId": sk,
         "awsRegion": record.get("awsRegion", ""),
-    })
+        "ttl": ttl,
+    }
+    region_table.put_item(Item=item)
 
 
-def write_user_agent(access_key_id: str, sk: str, record: dict):
+def write_user_agent(access_key_id: str, sk: str, record: dict, ttl: int):
     user_agent = record.get("userAgent", "")
-
-    user_agent_table.put_item(Item={
+    item = {
         "accessKeyId": access_key_id,
         "eventTime#eventId": sk,
         "userAgent": user_agent,
         "userAgentType": classify_user_agent(user_agent),
-    })
+        "ttl": ttl,
+    }
+    user_agent_table.put_item(Item=item)
 
 
 # -----------------------------------------------------------------------
