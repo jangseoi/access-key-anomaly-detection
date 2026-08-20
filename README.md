@@ -20,7 +20,7 @@ CloudTrail 이벤트를 5개의 Reference Table로 분리 적재하여 다차원
 **활용 기술**
 - **Python**: boto3, geoip2, requests
 
-> 아키텍처, Reference Table 스키마 등 자세한 구성은 [인프라스트럭처 문서](./INFRASTRUCTURE.md)를 참고하세요.
+> 아키텍처, Reference Table 스키마 등 자세한 구성은 [Infrastructure 문서](./INFRASTRUCTURE.md) 참고 부탁드립니다.
 
 <br>
 
@@ -40,8 +40,8 @@ CloudTrail 이벤트를 5개의 Reference Table로 분리 적재하여 다차원
 
 ## 문서
 
-- [인프라스트럭처](./INFRASTRUCTURE.md) — 아키텍처, Reference Table 스키마 등 상세 구성
-- [셋업 가이드](./SETUP.md) — DynamoDB/Secrets Manager/환경변수 설정 및 배포 순서
+- [Infrastructure](./INFRASTRUCTURE.md) — 아키텍처, Reference Table 스키마 등 상세 구성
+- [Setup Guide](./SETUP.md) — DynamoDB, IAM 정책, Secrets Manager, Lambda 환경변수 등 설정 및 배포 순서 설명
 
 <br>
 
