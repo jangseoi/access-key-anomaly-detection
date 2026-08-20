@@ -12,6 +12,8 @@ AWS CloudTrail 이벤트를 기반으로 IAM Access Key(AKIA)의 이상행위를
 
 CloudTrail 이벤트를 5개의 Reference Table로 분리 적재하여 다차원 컨텍스트를 수집하고, DynamoDB Streams를 통해 데이터 적재 즉시 탐지 로직을 실행합니다. 공격자 행위 패턴을 기반으로 설계된 5개의 탐지 시나리오를 통해 이상행위를 식별합니다.
 
+![아키텍처 다이어그램](./access-key-anomaly-detection.png)
+
 **활용 서비스**
 - **AWS**: CloudTrail, DynamoDB (+ Streams), Lambda, Secrets Manager, S3
 - **외부**: MaxMind GeoLite2-City (IP 지리 정보 조회), Slack API (알림)
