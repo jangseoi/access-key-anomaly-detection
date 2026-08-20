@@ -1,3 +1,5 @@
+# 중복 alert의 다량 발생으로 인해, 시나리오 3 대상 cooldown 로직 적용
+
 import boto3
 import json
 import logging
@@ -18,6 +20,10 @@ region_table      = dynamodb.Table("ref_region")
 user_agent_table  = dynamodb.Table("ref_user_agent")
 error_event_table = dynamodb.Table("ref_error_event")
 aws_api_table     = dynamodb.Table("ref_aws_api")
+alert_cooldown_table = dynamodb.Table("ref_alert_cooldown")
+
+# 시나리오3 대상 Cool down 적용
+ALERT_COOLDOWN_MIN = 30
 
 def get_slack_token() -> str:
     secret_name = "msu-security-event-app-token"
@@ -39,29 +45,26 @@ ALLOWED_REGIONS   = set(os.environ.get("ALLOWED_REGIONS", "ap-northeast-2").spli
 ERROR_THRESHOLD   = int(os.environ.get("ERROR_THRESHOLD", "5"))
 ERROR_WINDOW_MIN  = int(os.environ.get("ERROR_WINDOW_MIN", "5"))
 
-# 정찰 API (시나리오 1)
+# 시나리오 1: 정찰 API 목록
 RECONNAISSANCE_APIS = {
-    "GetCallerIdentity",
-    "ListUserPolicies",
-    "ListAttachedUserPolicies",
+    "GetCallerIdentity", "ListUserPolicies", "ListAttachedUserPolicies",
 }
 
-# 고위험 API (시나리오 2)
+# 시나리오 2: 고위험 API 목록
 PRIVILEGE_ESCALATION_APIS = {
-    "CreateAccessKey", "AttachUserPolicy", "AttachRolePolicy",
-    "PutUserPolicy", "AddUserToGroup", "CreateUser", "PutRolePolicy",
+    "CreateAccessKey", "AttachUserPolicy", "AttachRolePolicy", "PutUserPolicy", "AddUserToGroup", "CreateUser", "PutRolePolicy",
 }
 
-# 알려진 공격 도구 시그니처 (시나리오 5)
+# 시나리오 4: 리소스 생성 API 목록
+RESOURCE_CREATE_APIS = {
+    "RunInstances", "CreateFunction"
+}
+
+# 시나리오 5: 알려진 공격 도구 시그니처
 ATTACK_TOOL_SIGNATURES = {
-    "pacu", "aws_pwn", "weirdaal", "nimbostratus",
-    "cloud_enum", "enumerate-iam", "aws-recon"
+    "pacu", "aws_pwn", "weirdaal", "nimbostratus", "cloud_enum", "enumerate-iam", "aws-recon"
 }
 
-
-# -----------------------------------------------------------------------
-# 메인 핸들러
-# -----------------------------------------------------------------------
 
 def lambda_handler(event, context):
     for record in event.get("Records", []):
@@ -84,7 +87,7 @@ def lambda_handler(event, context):
             elif "ref_error_event" in source_table:
                 handle_error_event(new_image)
         except Exception as e:
-            logger.error(f"이벤트 처리 실패: {e}")
+            logger.error(f"[에러] 이벤트 처리 실패: {e}")
 
 
 # -----------------------------------------------------------------------
@@ -102,14 +105,11 @@ def handle_aws_api_event(image: dict):
 
     event_time, event_id = sk.split("#", 1)
 
-    # ip_country는 여러 시나리오 공통으로 미리 조회
     ip_info      = get_ip_country(access_key_id, sk)
     country_code = ip_info.get("countryCode", "")
     source_ip    = ip_info.get("sourceIPAddress", "")
     is_foreign_ip = country_code and country_code not in ALLOWED_COUNTRIES
-    is_night_time = check_night_time(event_time)
 
-    # region, user_agent는 각 시나리오 블록 안에서 필요할 때 조회
     aws_region = ""
     ua_type    = ""
     user_agent = ""
@@ -137,7 +137,6 @@ def handle_aws_api_event(image: dict):
         })
 
     # 시나리오 4: 비정상 리전 + 리소스 생성 API
-    RESOURCE_CREATE_APIS = {"RunInstances", "CreateFunction"}
     if event_name in RESOURCE_CREATE_APIS:
         region_info       = get_region(access_key_id, sk)
         aws_region        = region_info.get("awsRegion", "")
@@ -177,11 +176,7 @@ def handle_aws_api_event(image: dict):
             alert=alert,
         )
 
-
-# -----------------------------------------------------------------------
 # ref_error_event 스트림 핸들러 (시나리오 3)
-# -----------------------------------------------------------------------
-
 def handle_error_event(image: dict):
     access_key_id = get_str(image, "accessKeyId")
     sk            = get_str(image, "eventTime#eventId")
@@ -207,31 +202,44 @@ def handle_error_event(image: dict):
 
     error_count = len(response.get("Items", []))
 
-    if error_count >= ERROR_THRESHOLD:
-        api_response = aws_api_table.query(
-            KeyConditionExpression=(
-                boto3.dynamodb.conditions.Key("accessKeyId").eq(access_key_id) &
-                boto3.dynamodb.conditions.Key("eventTime#eventId").between(
-                    window_start, sk
-                )
-            ),
-            ScanIndexForward=False,
-            Limit=5
-        )
-        recent_apis = [item.get("eventName", "") for item in api_response.get("Items", [])]
+    if error_count < ERROR_THRESHOLD:
+        return
 
-        send_slack_alert_scenario3(
-            access_key_id=access_key_id,
-            event_time=event_time,
-            error_count=error_count,
-            recent_apis=recent_apis,
-        )
+    api_response = aws_api_table.query(
+        KeyConditionExpression=(
+            boto3.dynamodb.conditions.Key("accessKeyId").eq(access_key_id) &
+            boto3.dynamodb.conditions.Key("eventTime#eventId").between(
+                window_start, sk
+            )
+        ),
+        ScanIndexForward=False,
+        Limit=5
+    )
+    recent_apis = [item.get("eventName", "") for item in api_response.get("Items", [])]
 
+    # cooldown 체크: 임계값을 넘긴 시점의 실제 출발지 IP를 기준으로 비교
+    ip_info    = get_ip_country(access_key_id, sk)
+    current_ip = ip_info.get("sourceIPAddress", "Unknown")
 
-# -----------------------------------------------------------------------
-# DynamoDB 조회 헬퍼
-# -----------------------------------------------------------------------
+    cooldown = get_cooldown(access_key_id)
+    last_ips = cooldown.get("lastIPs", [])
 
+    if cooldown and not has_new_ip(last_ips, [current_ip]):
+        logger.info(f"[쿨다운] 시나리오3 알람 스킵 - {access_key_id} / IP 변화 없음 ({current_ip})")
+        return
+
+    if cooldown:
+        logger.info(f"[쿨다운] 새로운 IP 감지 - 알람 발송: {current_ip}")
+
+    send_slack_alert_scenario3(
+        access_key_id=access_key_id,
+        event_time=event_time,
+        error_count=error_count,
+        recent_apis=recent_apis,
+    )
+    set_cooldown(access_key_id, list(set(last_ips) | {current_ip}))
+
+# Reference DB 조회
 def get_ip_country(access_key_id: str, sk: str) -> dict:
     try:
         res = ip_country_table.get_item(Key={
@@ -242,7 +250,6 @@ def get_ip_country(access_key_id: str, sk: str) -> dict:
     except Exception as e:
         logger.warning(f"ip_country 조회 실패: {e}")
         return {}
-
 
 def get_region(access_key_id: str, sk: str) -> dict:
     try:
@@ -255,7 +262,7 @@ def get_region(access_key_id: str, sk: str) -> dict:
         logger.warning(f"region 조회 실패: {e}")
         return {}
 
-
+# 유틸
 def get_user_agent(access_key_id: str, sk: str) -> dict:
     try:
         res = user_agent_table.get_item(Key={
@@ -267,29 +274,36 @@ def get_user_agent(access_key_id: str, sk: str) -> dict:
         logger.warning(f"user_agent 조회 실패: {e}")
         return {}
 
-
-# -----------------------------------------------------------------------
-# 유틸
-# -----------------------------------------------------------------------
-
 def get_str(image: dict, key: str) -> str:
     return image.get(key, {}).get("S", "")
 
-
-def check_night_time(event_time: str) -> bool:
-    """KST 기준 00:00 ~ 06:00 여부"""
+# cooldown 테이블에서 기존 알람 이력 조회
+def get_cooldown(access_key_id: str) -> dict: 
     try:
-        utc_dt = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
-        kst_dt = utc_dt.astimezone(timezone(timedelta(hours=9)))
-        return 0 <= kst_dt.hour < 6
-    except Exception:
-        return False
+        res = alert_cooldown_table.get_item(Key={"alertKey": access_key_id})
+        return res.get("Item", {})
+    except Exception as e:
+        logger.warning(f"쿨다운 조회 실패: {e}")
+        return {}
 
+# 알람 발송 후 cooldown 및 IP 목록 기록
+def set_cooldown(access_key_id: str, ips: list):
+    
+    ttl = int((datetime.now(timezone.utc) + timedelta(minutes=ALERT_COOLDOWN_MIN)).timestamp())
+    try:
+        alert_cooldown_table.put_item(Item={
+            "alertKey": access_key_id,
+            "lastIPs": ips,
+            "ttl": ttl,
+        })
+    except Exception as e:
+        logger.warning(f"쿨다운 기록 실패: {e}")
 
-# -----------------------------------------------------------------------
+# 새로운 IP 확인
+def has_new_ip(last_ips: list, current_ips: list) -> bool:
+    return bool(set(current_ips) - set(last_ips))
+
 # Slack 알림
-# -----------------------------------------------------------------------
-
 def send_slack_alert(
     access_key_id: str,
     event_name: str,
