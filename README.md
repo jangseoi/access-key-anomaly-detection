@@ -41,7 +41,7 @@ CloudTrail 이벤트를 5개의 Reference Table로 분리 적재하여 다차원
 
 ## 문서
 
-- [인프라스트럭처](./INFRASTRUCTURE.md) — 아키텍처, Reference Table 스키마, Lambda 함수, 쿨다운 로직, 기술 스택
+- [인프라스트럭처](./INFRASTRUCTURE.md) — 아키텍처, Reference Table 스키마 등 상세 구성
 - [셋업 가이드](./SETUP.md) — DynamoDB/Secrets Manager/환경변수 설정 및 배포 순서
 - [체인지로그](./CHANGELOG.md) — 버전별 변경 이력
 

@@ -1,20 +1,8 @@
-# 인프라스트럭처
+# Infrastructure
 
 ## 아키텍처
 
-```
-[멤버 계정] CloudTrail (모든 리전)
-        ↓
-[Log Archive] S3 (CloudTrail 중앙 버킷)
-        ↓ S3 Event Notification (cross-account)
-[Audit 계정] Lambda: ref-table-processor
-        ↓
-[Audit 계정] DynamoDB: Reference Table 5종
-        ↓ DynamoDB Streams
-[Audit 계정] Lambda: ref-suspicious-detector
-        ↓
-Slack 알림
-```
+![아키텍처 다이어그램](./access-key-anomaly-detection.png)
 
 > AWS Control Tower (Organization Trail) 환경 기준으로 설계되었으며, 단일 계정 멀티 리전 Trail 환경에서도 동일하게 구성 가능합니다.
 
