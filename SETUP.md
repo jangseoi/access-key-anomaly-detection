@@ -1,4 +1,4 @@
-# 셋업 가이드
+# Setup Guide
 
 ## 사전 요구사항
 
@@ -12,6 +12,7 @@
 ## 1. DynamoDB 테이블 생성
 
 아래 6개 테이블을 Audit 계정에 생성합니다. Reference Table 5종은 공통 키 구조를 사용합니다.
+(참고) 'ref_alert_cooldown' 테이블은 Alert 쿨다운 로직에 활용되는 테이블로, Reference 목적의 테이블이 아닙니다.
 
 | 테이블명 | 파티션 키 | 정렬 키 | TTL 속성 |
 |---------|----------|--------|---------|
@@ -22,7 +23,7 @@
 | `ref_error_event` | `accessKeyId` (String) | `eventTime#eventId` (String) | `ttl` |
 | `ref_alert_cooldown` | `alertKey` (String) | 없음 | `ttl` |
 
-`ref_aws_api`, `ref_error_event`는 DynamoDB Streams(New image)를 활성화해야 합니다.
+`ref_aws_api`, `ref_error_event`는 DynamoDB Streams(New image)를 활성화해야 합니다. (시나리오 탐지 Lambda 트리거 목적)
 
 <br>
 
@@ -49,6 +50,8 @@
 <br>
 
 ## 3. Secrets Manager 설정
+
+Slack Bot Token, Maxmind License Key 사용 시 보안성 향상을 위해 Lambda 실행 시마다 Secrets Manager에서 Token을 동적으로 조회하여 사용하도록 구성합니다.
 
 | 시크릿 이름 (예시) | 키 | 사용처 |
 |-------------------|-----|--------|
@@ -89,13 +92,14 @@
 
 ## 5. GeoIP Layer 최초 배포
 
-`ref-table-processor`는 `/opt/GeoLite2-City.mmdb` 경로의 Layer를 사용합니다. `geoip-layer-builder`를 한 번 수동 실행하여 `geoip-mmdb` Layer를 최초 발행하고 `ref-table-processor`에 연결한 뒤, 이후에는 EventBridge 스케줄(예: 매주 1회)로 자동 갱신되도록 설정합니다.
+`ref-table-processor`는 `/opt/GeoLite2-City.mmdb` 경로의 Layer를 사용합니다.
+`geoip-layer-builder`를 한 번 수동 실행하여 `geoip-mmdb` Layer를 최초 발행하고 `ref-table-processor`에 연결한 뒤, 이후에는 EventBridge 스케줄(예: 매주 1회)로 자동 갱신되도록 설정합니다.
 
 <br>
 
 ## 6. S3 Event Notification 연결
 
-Log Archive 계정의 CloudTrail 버킷에 Object Created 이벤트를 Audit 계정의 `ref-table-processor` Lambda(또는 SNS/SQS 경유)로 전달하도록 cross-account 권한과 알림을 설정합니다.
+Log Archive 계정의 CloudTrail 버킷에 Object Created 이벤트를 Audit 계정의 `ref-table-processor` Lambda로 전달하도록 cross-account 권한과 알림을 설정합니다.
 
 <br>
 
