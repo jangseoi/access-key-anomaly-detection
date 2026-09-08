@@ -15,20 +15,19 @@ logger.setLevel(logging.INFO)
 
 dynamodb = boto3.resource("dynamodb")
 
-ip_country_table  = dynamodb.Table("ref_ip_country")
-region_table      = dynamodb.Table("ref_region")
-user_agent_table  = dynamodb.Table("ref_user_agent")
-error_event_table = dynamodb.Table("ref_error_event")
-aws_api_table     = dynamodb.Table("ref_aws_api")
-alert_cooldown_table = dynamodb.Table("ref_alert_cooldown")
+ip_country_table  = dynamodb.Table(os.environ["IP_COUNTRY_TABLE"])
+region_table      = dynamodb.Table(os.environ["REGION_TABLE"])
+user_agent_table  = dynamodb.Table(os.environ["USER_AGENT_TABLE"])
+error_event_table = dynamodb.Table(os.environ["ERROR_EVENT_TABLE"])
+aws_api_table     = dynamodb.Table(os.environ["AWS_API_TABLE"])
+alert_cooldown_table = dynamodb.Table(os.environ["ALERT_COOLDOWN_TABLE"])
 
 # 시나리오3 대상 Cool down 적용
-ALERT_COOLDOWN_MIN = 30
+ALERT_COOLDOWN_MIN = int(os.environ.get("ALERT_COOLDOWN_MIN", "30"))
 
 def get_slack_token() -> str:
-    secret_name = "msu-security-event-app-token"
-    region_name = "ap-northeast-2"
-    client = boto3.client(service_name="secretsmanager", region_name=region_name)
+    secret_name = os.environ["SLACK_SECRET_NAME"]
+    client = boto3.client(service_name="secretsmanager")
     try:
         response = client.get_secret_value(SecretId=secret_name)
         secret_data = json.loads(response["SecretString"])

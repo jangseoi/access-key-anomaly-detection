@@ -13,15 +13,16 @@ log.setLevel(logging.INFO)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 logging.getLogger('requests.packages.urllib3.connectionpool').setLevel(logging.WARNING)
 
-SECRET_NAME = os.environ["SECRET_NAME"]
+SECRET_NAME          = os.environ["SECRET_NAME"]
+LAYER_NAME           = os.environ.get("LAYER_NAME", "geoip-mmdb")
+TARGET_FUNCTION_NAME = os.environ["TARGET_FUNCTION_NAME"]
 
-LAYER_NAME = "geoip-mmdb"
 EDITION_ID = "GeoLite2-City"
 LOCAL_TMP  = "/tmp/"
 CHUNK_SIZE = 1024 * 1024  # 1MB
 
-lambda_client  = boto3.client("lambda",         region_name="ap-northeast-2")
-secrets_client = boto3.client("secretsmanager", region_name="ap-northeast-2")
+lambda_client  = boto3.client("lambda")
+secrets_client = boto3.client("secretsmanager")
 
 # 콜드스타트 시 1회만 조회 (컨테이너 재사용 시 캐싱)
 _license_key: str | None = None
@@ -146,15 +147,15 @@ def lambda_handler(event, context):
     layer_arn = publish_layer(zip_path, db_hash)
 
     current = lambda_client.get_function_configuration(
-        FunctionName="ref-table-processor"
+        FunctionName=TARGET_FUNCTION_NAME
     )
     existing_layers = [
         l["Arn"] for l in current.get("Layers", [])
-        if "geoip-mmdb" not in l["Arn"]  # geoip-mmdb 빼고
+        if LAYER_NAME not in l["Arn"]  # 기존 geoip 레이어 빼고
     ]
 
     lambda_client.update_function_configuration(
-        FunctionName="ref-table-processor",
+        FunctionName=TARGET_FUNCTION_NAME,
         Layers=existing_layers + [layer_arn]
     )
 

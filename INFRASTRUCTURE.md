@@ -46,7 +46,7 @@
 ### ref-table-processor
 - **역할**: CloudTrail 로그 파일을 파싱하여 AKIA Access Key 이벤트만 필터링 후 Reference Table에 적재
 - **트리거**: Log Archive 계정 S3 Event Notification (cross-account)
-- **Layer**: `geoip-mmdb` (MaxMind GeoLite2-City.mmdb + geoip2 라이브러리)
+- **Layer**: `geoip-mmdb` (MaxMind GeoLite2-City.mmdb 데이터만 포함, `geoip2` 파이썬 라이브러리는 함수 배포 패키지에 포함)
 
 ### ref-suspicious-detector
 - **역할**: DynamoDB Streams를 통해 INSERT 이벤트 수신 후 탐지 시나리오 평가 및 Slack 알림 발송
