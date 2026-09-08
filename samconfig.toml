@@ -1,0 +1,21 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "access-key-anomaly-detection"
+resolve_s3 = true
+s3_prefix = "access-key-anomaly-detection"
+region = "ap-northeast-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = [
+  "SlackChannelId=",
+  "SlackSecretName=security-event-app-token",
+  "MaxmindSecretName=",
+  "AllowedCountries=KR",
+  "AllowedRegions=ap-northeast-2",
+  "ErrorThreshold=5",
+  "ErrorWindowMin=5",
+  "AlertCooldownMinutes=30",
+  "CloudTrailBucketArn=",
+  "CloudTrailBucketAccountId="
+]

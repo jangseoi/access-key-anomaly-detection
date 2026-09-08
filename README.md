@@ -38,10 +38,23 @@ CloudTrail 이벤트를 5개의 Reference Table로 분리 적재하여 다차원
 
 <br>
 
+## 배포
+
+`template.yaml`을 통해 [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)로 배포합니다.
+
+```bash
+sam build
+sam deploy --guided
+```
+
+자세한 사전 준비물과 파라미터, 배포 후 수동 단계는 [Setup Guide](./SETUP.md#sam-cli로-배포하기)를 참고하세요.
+
+<br>
+
 ## 문서
 
 - [Infrastructure](./INFRASTRUCTURE.md) — 아키텍처, Reference Table 스키마 등 상세 구성
-- [Setup Guide](./SETUP.md) — DynamoDB, IAM 정책, Secrets Manager, Lambda 환경변수 등 설정 및 배포 순서 설명
+- [Setup Guide](./SETUP.md) — SAM CLI 배포 가이드 및 수동 구성(DynamoDB, IAM 정책, Secrets Manager, Lambda 환경변수 등) 절차
 
 <br>
 
